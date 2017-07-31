@@ -7,3 +7,8 @@
 *.swl
 .rbx/
 *.rdb
+.idea
+.rbenv-gemsets
+coverage/
+tmp/
+pkg

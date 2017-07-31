@@ -1,13 +1,13 @@
-#!/usr/bin/env ruby -Ku
+#!/usr/bin/env ruby
+# encoding: utf-8
 
 require 'optparse'
-require 'bundler/setup'
 require 'eventmachine'
+require 'yaml'
+require 'active_support/core_ext/hash'
 
-options = {
-  api_host: '0.0.0.0', api_port: '4567', websocket_host: '0.0.0.0',
-  websocket_port: '8080', debug: false, redis_address: 'redis://0.0.0.0:6379/0'
-  }
+options = {}
+
 
 OptionParser.new do |opts|
   opts.on '-h', '--help', 'Display this screen' do
@@ -15,12 +15,16 @@ OptionParser.new do |opts|
     exit
   end
 
-  opts.on '-k', '--app_key APP_KEY', "Pusher application key" do |k|
+  opts.on '-k', '--app_key APP_KEY', "Pusher application key. This parameter is required on command line or in optional config file." do |k|
     options[:app_key] = k
   end
 
-  opts.on '-s', '--secret SECRET', "Pusher application secret" do |k|
+  opts.on '-s', '--secret SECRET', "Pusher application secret. This parameter is required on command line or in optional config file." do |k|
     options[:secret] = k
+  end
+
+  opts.on '-C', '--config_file FILE', "Path to Yaml file that can contain all configuration options, including required ones." do |k|
+    options[:config_file] = k
   end
 
   opts.on '-r', '--redis_address URL', "Address to bind to (Default: redis://127.0.0.1:6379/0)" do |h|
@@ -45,7 +49,11 @@ OptionParser.new do |opts|
     options[:tls_options][:private_key_file] = p
   end
 
-  opts.on '-c', '--cert_chain_file FILE', "Certificate chain file for SSL transport" do |p|
+  opts.on '-b', '--webhook_url URL', "Callback URL for webhooks" do |p|
+    options[:webhook_url] = p
+  end
+
+  opts.on '-c', '--cert_file FILE', "Certificate file for SSL transport" do |p|
     options[:tls_options] ||= {}
     options[:tls_options][:cert_chain_file] = p
   end
@@ -53,28 +61,60 @@ OptionParser.new do |opts|
   opts.on "-v", "--[no-]verbose", "Run verbosely" do |v|
     options[:debug] = v
   end
-end.parse!
 
-%w<app_key secret>.each do |parameter|
-  raise RuntimeError.new "--#{parameter} STRING is a required argument. Use your Pusher #{parameter}." unless options[parameter.to_sym]
+  opts.on "-t" "--activity_timeout", "Activity (ping-pong) Timeout" do |t|
+    options[:activity_timeout] = t
+  end
+
+  opts.on '--pid_file PIDFILE', "The Slanger process ID file name." do |k|
+    options[:pid_file] = k
+  end
+
+  opts.parse!
+
+  if options[:config_file] and File.exists? options[:config_file]
+    config_file_contents = YAML::load(File.open(options[:config_file]))
+    options.reverse_merge! config_file_contents.deep_symbolize_keys!
+  end
+
+  %w<app_key secret>.each do |parameter|
+    unless options[parameter.to_sym]
+      puts "--#{parameter} STRING is a required argument. Use your Pusher #{parameter}.\n"
+      puts opts
+      exit
+    end
+  end
+
 end
+
+
 
 if options[:tls_options]
   [:cert_chain_file, :private_key_file].each do |param|
+    raise RuntimeError.new "Both --cert_file and --private_key_file need to be specified" unless options[:tls_options][param]
     raise RuntimeError.new "--#{param} does not exist at `#{options[:tls_options][param]}`" unless File.exists? options[:tls_options][param]
-    raise RuntimeError.new "Both --cert_chain_file and --private_key_file need to be specified" unless options[:tls_options][param]
   end
 end
 
-EM.epoll
-EM.kqueue
+STDOUT.sync = true
+
+case
+when EM.epoll?  then EM.epoll
+when EM.kqueue? then EM.kqueue
+end
 
 EM.run do
   File.tap { |f| require f.expand_path(f.join(f.dirname(__FILE__),'..', 'slanger.rb')) }
   Slanger::Config.load options
+
+  # Write PID to file
+  unless options[:pid_file].nil?
+    File.open(options[:pid_file], 'w') { |f| f.puts Process.pid }
+  end
+
   Slanger::Service.run
 
-  puts "\x1b[2J\x1b[H"
+  puts "\n"
   puts "\n"
   puts "    .d8888b.  888                                               "
   puts "   d88P  Y88b 888                                               "
@@ -89,6 +129,9 @@ EM.run do
   puts '                                    "Y88P"                      '
   puts "\n" * 2
 
-  puts "Slanger API server listening on port #{options[:api_port]}"
-  puts "Slanger WebSocket server listening on port #{options[:websocket_port]}"
+  puts "Running Slanger v.#{Slanger::VERSION}"
+  puts "\n"
+
+  puts "Slanger API server listening on port #{Slanger::Config.api_port}"
+  puts "Slanger WebSocket server listening on port #{Slanger::Config.websocket_port}"
 end

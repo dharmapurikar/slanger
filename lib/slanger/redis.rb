@@ -2,23 +2,15 @@
 # Interface with Redis.
 
 require 'forwardable'
+require 'oj'
 
 module Slanger
   module Redis
     extend Forwardable
 
-    def self.extended base
-      # Dispatch messages received from Redis to their destination channel.
-      base.on(:message) do |channel, message|
-        message = JSON.parse message
-        c = Channel.from message['channel']
-        c.dispatch message, channel
-      end
-    end
-
     def_delegator  :publisher, :publish
-    def_delegators :subscriber, :on, :subscribe
-    def_delegators :regular_connection, :hgetall, :hdel, :hset
+    def_delegators :subscriber, :subscribe
+    def_delegators :regular_connection, :hgetall, :hdel, :hset, :hincrby
 
     private
 
@@ -31,7 +23,13 @@ module Slanger
     end
 
     def subscriber
-      @subscriber ||= new_connection
+      @subscriber ||= new_connection.pubsub.tap do |c|
+        c.on(:message) do |channel, message|
+          message = Oj.load(message)
+          c = Channel.from message['channel']
+          c.dispatch message, channel
+        end
+      end
     end
 
     def new_connection

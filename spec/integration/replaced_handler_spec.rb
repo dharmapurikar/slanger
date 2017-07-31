@@ -1,4 +1,4 @@
-require 'spec/spec_helper'
+require 'spec_helper'
 require 'lib/slanger/handler.rb'
 
 class ReplacedHandler < Slanger::Handler
@@ -18,7 +18,6 @@ describe 'Replacable handler' do
       end
     end
 
-    msgs.last.should == { "channel" => nil, "event" => "pusher:info",
-                          "data" => { "message" => "Welcome!" } }
+    expect(msgs.last).to eq({ "event" => "pusher:info", "data" =>"{\"message\":\"Welcome!\"}" })
   end
 end
